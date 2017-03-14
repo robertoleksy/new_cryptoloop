@@ -99,12 +99,12 @@ public:
 		m_threads.resize(num_of_threads);
 		for(auto &thr : m_threads) {
 			thr = std::thread([this]{
-				std::unique_lock<std::mutex> lk(wakeup_mtx);
 				while(true) {
+					std::unique_lock<std::mutex> lk(wakeup_mtx);
 					wakeup_cv.wait(lk);
 					size_t job_index = job_to_let.fetch_add(1);
 					if(job_index >= m_jobs.size()) {
-						jobs_end.notify_one();
+						jobs_end.notify_all();
 						break; // todo
 					}
 					m_jobs.at(job_index)();
@@ -119,7 +119,7 @@ public:
 
 	void run_jobs() {
 		{
-		std::unique_lock<std::mutex> lk(wakeup_mtx);
+		//std::unique_lock<std::mutex> lk(wakeup_mtx);
 		}
 		wakeup_cv.notify_all();
 	}
@@ -152,6 +152,8 @@ public:
 	};
 
 	~thread_crypto () {
+		wakeup_cv.notify_all();
+		jobs_end.notify_all();
 		for (auto &thr : m_threads) {
 			thr.join();
 		}
@@ -198,9 +200,9 @@ int main() {
 		loc_job.m_key = key.data();
 		thread_encrypt.add_job(std::move(loc_job));
 	}
-	//std::this_thread::sleep_for(std::chrono::seconds(2));
-	//thread_encrypt.run_jobs();
-	//thread_encrypt.join();
+	std::this_thread::sleep_for(std::chrono::seconds(2));
+	thread_encrypt.run_jobs();
+	thread_encrypt.join();
 
 	//std::vector<std::pair<unsigned char *, size_t>> m_bufs;
 
