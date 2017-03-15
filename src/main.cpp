@@ -94,19 +94,22 @@ void test_crypto_inplace2() {
 class thread_crypto final {
 public:
 	struct job;
-	thread_crypto (size_t num_of_threads) : ready_for_run_flag(false)
+	thread_crypto (size_t num_of_threads)
+	: job_to_let(0), ready_for_run_flag(false), end_jobs_flag(false),start_jobs_flag(false)
 	{
 
 		m_threads.resize(num_of_threads);
 		for(auto &thr : m_threads) {
-			thr = std::thread([this]{
+			thr = std::thread([this] {
 				while(true) {
-					ready_for_run_flag = true;
+					start_jobs_flag = true;
 					ready_for_run_cv.notify_all();
 					std::unique_lock<std::mutex> lk(wakeup_mtx);
-					wakeup_cv.wait(lk);
+					wakeup_cv.wait(lk, [this]{return ready_for_run_flag.load();});
 					size_t job_index = job_to_let.fetch_add(1);
+					//std::cout << "job index " << job_index << '\n';
 					if(job_index >= m_jobs.size()) {
+						end_jobs_flag = true;
 						jobs_end.notify_all();
 						break; // todo
 					}
@@ -122,12 +125,14 @@ public:
 
 	void run_jobs() {
 		std::unique_lock<std::mutex> lk(wakeup_mtx);
-		ready_for_run_cv.wait(lk, [this]{return ready_for_run_flag.load();});
+		ready_for_run_cv.wait(lk, [this]{return start_jobs_flag.load();});
+		ready_for_run_flag = true;
 		wakeup_cv.notify_all();
 	}
+
 	void join() {
 		std::unique_lock<std::mutex> lk(wakeup_mtx);
-		jobs_end.wait(lk);
+		jobs_end.wait(lk, [this]{return end_jobs_flag.load();});
 	}
 
 	struct job {
@@ -154,8 +159,6 @@ public:
 	};
 
 	~thread_crypto () {
-		wakeup_cv.notify_all();
-		jobs_end.notify_all();
 		for (auto &thr : m_threads) {
 			thr.join();
 		}
@@ -164,6 +167,8 @@ public:
 private:
 	std::atomic<size_t> job_to_let;
 	std::atomic<bool> ready_for_run_flag;
+	std::atomic<bool> end_jobs_flag;
+	std::atomic<bool> start_jobs_flag;
 	std::condition_variable ready_for_run_cv;
 	std::mutex wakeup_mtx;
 	std::condition_variable wakeup_cv;
